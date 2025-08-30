@@ -44,10 +44,22 @@ export default {
 
       const row = await env.LIVE_HEAD_DB
         .prepare(
-          "SELECT status as s, ms, pod, redir, cross as x, ts FROM health_last WHERE site=?1"
+          "SELECT status, ms, pod, redir, cross, ts FROM health_last WHERE site=?1"
         )
         .bind(site)
         .first();
+      
+      // Renommer les champs pour plus de clarté
+      if (row) {
+        row.status = row.status;
+        row.ms = row.ms;
+        row.pod = row.pod;
+        row.redir = row.redir;
+        row['cross-domain'] = row.cross;
+        row.time = row.ts;
+        delete row.cross;
+        delete row.ts;
+      }
 
       return json({ ok: true, site, data: row || null });
     }
@@ -93,7 +105,7 @@ export default {
 
       // Build SQL + params (anti-injection via bind)
       let sql =
-        "SELECT site, status as s, ms, pod, redir, cross as x, ts FROM health_last WHERE 1=1";
+        "SELECT site, status, ms, pod, redir, cross, ts FROM health_last WHERE 1=1";
       const binds: any[] = [];
 
       if (statuses.length > 0) {
@@ -126,8 +138,19 @@ export default {
       binds.push(limit, offset);
 
       const res = await env.LIVE_HEAD_DB.prepare(sql).bind(...binds).all();
+      
+      // Renommer les champs pour plus de clarté
+      const formattedResults = res.results.map((row: any) => ({
+        site: row.site,
+        status: row.status,
+        ms: row.ms,
+        pod: row.pod,
+        redir: row.redir,
+        'cross-domain': row.cross,
+        time: row.ts
+      }));
 
-      return json({ ok: true, count: res.results.length, data: res.results });
+      return json({ ok: true, count: formattedResults.length, data: formattedResults });
     }
 
     return new Response("Not Found", { status: 404 });
