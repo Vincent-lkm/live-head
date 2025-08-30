@@ -1,0 +1,18 @@
+name = "live-head"
+main = "src/worker.ts"
+compatibility_date = "2025-08-30"
+logpush = true
+
+[vars]
+HISTORY_ENABLED = "1"
+
+# ===== KV (on mettra l'ID réel après création) =====
+#[[kv_namespaces]]
+#binding = "LIVE_HEAD_KV"
+#id = "9fa5ef29b21b4f5b8af8b62025444eef"
+
+# ===== D1 (on mettra l'ID réel après création) =====
+[[d1_databases]]
+binding = "LIVE_HEAD_DB"
+database_name = "live-head-db"
+database_id = "052a6fa9-c7b8-46e9-ae56-03c1be9a0a32"

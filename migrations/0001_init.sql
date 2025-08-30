@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS health_last (
+  site TEXT PRIMARY KEY,
+  status INTEGER NOT NULL,
+  ms INTEGER NOT NULL,
+  port INTEGER NOT NULL,
+  location TEXT,
+  cross INTEGER NOT NULL DEFAULT 0,
+  ts INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS health_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  site TEXT NOT NULL,
+  status INTEGER NOT NULL,
+  ms INTEGER NOT NULL,
+  port INTEGER NOT NULL,
+  location TEXT,
+  cross INTEGER NOT NULL DEFAULT 0,
+  ts INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_history_site_ts ON health_history(site, ts DESC);
