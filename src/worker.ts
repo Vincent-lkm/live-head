@@ -9,8 +9,8 @@ type PushItem = {
   site: string;
   status: number;
   ms: number;
-  port: number;
-  location?: string | null;
+  pod?: string;
+  redir?: string | null;
   ts?: number; // ms
 };
 
@@ -44,7 +44,7 @@ export default {
 
       const row = await env.LIVE_HEAD_DB
         .prepare(
-          "SELECT status as s, ms, port as p, location as l, cross as x, ts FROM health_last WHERE site=?1"
+          "SELECT status as s, ms, pod, redir, cross as x, ts FROM health_last WHERE site=?1"
         )
         .bind(site)
         .first();
@@ -93,7 +93,7 @@ export default {
 
       // Build SQL + params (anti-injection via bind)
       let sql =
-        "SELECT site, status as s, ms, port as p, location as l, cross as x, ts FROM health_last WHERE 1=1";
+        "SELECT site, status as s, ms, pod, redir, cross as x, ts FROM health_last WHERE 1=1";
       const binds: any[] = [];
 
       if (statuses.length > 0) {
@@ -171,9 +171,9 @@ function expectedHosts(site: string): string[] {
   return [apex, `www.${apex}`];
 }
 
-function computeCross(site: string, status: number, location?: string | null): boolean {
-  if (!isRedirect(status) || !location) return false;
-  const target = hostFromUrl(location);
+function computeCross(site: string, status: number, redir?: string | null): boolean {
+  if (!isRedirect(status) || !redir) return false;
+  const target = hostFromUrl(redir);
   if (!target) return false; // relatif => pas cross
   const expected = expectedHosts(site);
   return !expected.includes(target);
@@ -184,32 +184,32 @@ async function handleOne(item: PushItem, env: Env, ctx: ExecutionContext) {
   const site = String(item.site || "").toLowerCase().trim();
   const status = Number(item.status || 0);
   const ms = Number(item.ms || 0);
-  const port = Number(item.port || 0);
-  const location = item.location ?? null;
+  const pod = String(item.pod || "unknown");
+  const redir = item.redir ?? null;
   const ts = Number.isFinite(item.ts) && item.ts! > 0 ? Number(item.ts) : now;
 
   if (!site || !Number.isFinite(status) || !Number.isFinite(ms)) {
     return { site, ok: false, error: "invalid_fields" };
   }
 
-  const cross = computeCross(site, status, location);
+  const cross = computeCross(site, status, redir);
 
   // 1) D1 upsert "last"
   const updated_at = now;
   await env.LIVE_HEAD_DB
     .prepare(
-      `INSERT INTO health_last (site,status,ms,port,location,cross,ts,updated_at)
+      `INSERT INTO health_last (site,status,ms,pod,redir,cross,ts,updated_at)
        VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
        ON CONFLICT(site) DO UPDATE SET
          status=excluded.status,
          ms=excluded.ms,
-         port=excluded.port,
-         location=excluded.location,
+         pod=excluded.pod,
+         redir=excluded.redir,
          cross=excluded.cross,
          ts=excluded.ts,
          updated_at=excluded.updated_at`
     )
-    .bind(site, status, ms, port, location, cross ? 1 : 0, ts, updated_at)
+    .bind(site, status, ms, pod, redir, cross ? 1 : 0, ts, updated_at)
     .run();
 
   // 2) Historique (optionnel)
@@ -217,28 +217,28 @@ async function handleOne(item: PushItem, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
       env.LIVE_HEAD_DB
         .prepare(
-          `INSERT INTO health_history (site,status,ms,port,location,cross,ts)
+          `INSERT INTO health_history (site,status,ms,pod,redir,cross,ts)
            VALUES (?1,?2,?3,?4,?5,?6,?7)`
         )
-        .bind(site, status, ms, port, location, cross ? 1 : 0, ts)
+        .bind(site, status, ms, pod, redir, cross ? 1 : 0, ts)
         .run()
     );
   }
 
   // 3) Alerte
   if (env.WEBHOOK_URL && (status >= 500 || (isRedirect(status) && cross))) {
-    ctx.waitUntil(sendAlert(env.WEBHOOK_URL, { site, status, ms, port, location, cross, ts }));
+    ctx.waitUntil(sendAlert(env.WEBHOOK_URL, { site, status, ms, pod, redir, cross, ts }));
   }
 
   return { site, ok: true, cross, status };
 }
 
 async function sendAlert(webhookUrl: string, p: {
-  site: string; status: number; ms: number; port: number; location?: string | null; cross: boolean; ts: number;
+  site: string; status: number; ms: number; pod: string; redir?: string | null; cross: boolean; ts: number;
 }) {
   const when = new Date(p.ts).toISOString();
   const msg = p.cross
-    ? `🚨 *Cross-domain redirect* ${p.site} → ${p.location} [${p.status}]`
+    ? `🚨 *Cross-domain redirect* ${p.site} → ${p.redir} [${p.status}]`
     : `🔥 *HTTP ${p.status}* sur ${p.site}`;
 
   const discord = {
@@ -250,8 +250,8 @@ async function sendAlert(webhookUrl: string, p: {
           { name: "Site", value: `\`${p.site}\``, inline: true },
           { name: "Status", value: `${p.status}`, inline: true },
           { name: "Latence (ms)", value: `${p.ms}`, inline: true },
-          { name: "Port", value: `${p.port}`, inline: true },
-          { name: "Location", value: p.location || "—", inline: false },
+          { name: "Pod", value: `${p.pod}`, inline: true },
+          { name: "Redirection", value: p.redir || "—", inline: false },
           { name: "Horodatage", value: when, inline: false },
         ],
       },
@@ -259,7 +259,7 @@ async function sendAlert(webhookUrl: string, p: {
   };
 
   const slack = {
-    text: `${msg}\n• site: ${p.site}\n• status: ${p.status}\n• ms: ${p.ms}\n• port: ${p.port}\n• location: ${p.location || "—"}\n• ts: ${when}`,
+    text: `${msg}\n• site: ${p.site}\n• status: ${p.status}\n• ms: ${p.ms}\n• pod: ${p.pod}\n• redir: ${p.redir || "—"}\n• ts: ${when}`,
   };
 
   const isDiscord = webhookUrl.includes("discord.com/api/webhooks/");
