@@ -13,17 +13,30 @@ POD_INFO="${POD_INFO:-unknown}"
 LOG_FILE="/mnt/www/update/log/live_head-$(date +%Y%m%d-%H%M%S).log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
-# Fonction pour tester un site
+# Fonction pour tester un site avec retry
 test_site() {
   local d="$1"
-  read -r code time_total <<<"$(curl -sS \
-    -H "Host: $d" -H "X-Forwarded-Proto: https" \
-    --http1.1 --no-keepalive \
-    --max-time 10 --connect-timeout 3 \
-    --range 0-1024 \
-    -o /dev/null \
-    -w '%{http_code} %{time_total}' \
-    "http://${LOCAL_IP}:${PORT}/" 2>/dev/null || echo "000 0")"
+  local max_retries=3
+  local retry=0
+  local code="000"
+  local time_total="0"
+  
+  # Essayer jusqu'à max_retries fois
+  while [[ $retry -lt $max_retries && "$code" == "000" ]]; do
+    read -r code time_total <<<"$(curl -sS \
+      -H "Host: $d" -H "X-Forwarded-Proto: https" \
+      --http1.1 --no-keepalive \
+      --max-time 20 --connect-timeout 10 \
+      --range 0-1024 \
+      -o /dev/null \
+      -w '%{http_code} %{time_total}' \
+      "http://${LOCAL_IP}:${PORT}/" 2>/dev/null || echo "000 0")"
+    
+    if [[ "$code" == "000" && $retry -lt $((max_retries - 1)) ]]; then
+      sleep 1  # Attendre 1 seconde avant de réessayer
+    fi
+    ((retry++))
+  done
   
   # Normaliser le code 206 en 200 (Partial Content = OK)
   [[ "$code" == "206" ]] && code="200"
